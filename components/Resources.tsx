@@ -1,0 +1,315 @@
+import React, { useState } from 'react';
+import { Resource, User, UserRole, ClassGroup } from '../types';
+import { Book, Link as LinkIcon, FileText, Plus, Trash2, ExternalLink, Globe, Search, Users, Filter, Download } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+interface ResourcesProps {
+  currentUser: User;
+  resources: Resource[];
+  classGroups: ClassGroup[];
+  onAdd: (resource: Omit<Resource, 'id' | 'createdAt'>) => void;
+  onDelete: (id: string) => void;
+}
+
+export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, classGroups, onAdd, onDelete }) => {
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedSubject, setSelectedSubject] = useState('');
+  
+  // Form State
+  const [title, setTitle] = useState('');
+  const [type, setType] = useState<'LINK' | 'BOOK' | 'FILE'>('LINK');
+  const [content, setContent] = useState('');
+  const [subject, setSubject] = useState('');
+  const [description, setDescription] = useState('');
+  const [targetClass, setTargetClass] = useState('');
+
+  const canEdit = [UserRole.ADMIN, UserRole.RESPONSABLE].includes(currentUser.role);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onAdd({
+      title,
+      type,
+      content,
+      subject,
+      description,
+      targetClass: targetClass || undefined
+    });
+    // Reset
+    setIsFormOpen(false);
+    setTitle('');
+    setContent('');
+    setSubject('');
+    setDescription('');
+    setTargetClass('');
+  };
+
+  const handleDelete = (id: string) => {
+    if (window.confirm("Voulez-vous vraiment supprimer cette ressource ? Cette action est irréversible.")) {
+      onDelete(id);
+    }
+  };
+
+  // Extract unique subjects for the filter dropdown
+  const uniqueSubjects = Array.from(new Set(resources.map(r => r.subject).filter(Boolean))).sort();
+
+  // Helper to count resources per subject for the dropdown
+  const getSubjectCount = (sub: string) => resources.filter(r => r.subject === sub).length;
+
+  const filteredResources = resources.filter(r => {
+    const matchesSearch = (r.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          (r.subject || '').toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSubject = selectedSubject === '' || r.subject === selectedSubject;
+    
+    return matchesSearch && matchesSubject;
+  });
+
+  const handleExportPDF = () => {
+    // Ensure jsPDF is instantiated correctly
+    const doc = new jsPDF();
+
+    // Title
+    doc.setFontSize(18);
+    doc.setTextColor(40);
+    doc.text("Liste des Ressources Pédagogiques", 14, 22);
+
+    // Meta-data
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    const dateStr = new Date().toLocaleDateString('fr-FR');
+    doc.text(`Généré le ${dateStr} par ${currentUser.name}`, 14, 30);
+    if (selectedSubject) {
+      doc.text(`Filtre : ${selectedSubject}`, 14, 36);
+    }
+
+    // Table Data
+    const tableData = filteredResources.map(row => [
+      row.title,
+      row.subject,
+      getTypeLabel(row.type),
+      row.targetClass || 'Toute l\'école',
+      row.content
+    ]);
+
+    // Generate Table
+    autoTable(doc, {
+      head: [['Titre', 'Matière', 'Type', 'Cible', 'Contenu/Lien']],
+      body: tableData,
+      startY: 45,
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [79, 70, 229] }, // Indigo-600
+    });
+
+    doc.save(`ressources_classpoll_${dateStr.replace(/\//g, '-')}.pdf`);
+  };
+
+  const getTypeIcon = (type: string) => {
+    switch (type) {
+      case 'BOOK': return <Book size={20} className="text-orange-600" />;
+      case 'FILE': return <FileText size={20} className="text-red-600" />;
+      default: return <Globe size={20} className="text-blue-600" />;
+    }
+  };
+
+  const getTypeLabel = (type: string) => {
+    switch (type) {
+      case 'BOOK': return 'Livre / Manuel';
+      case 'FILE': return 'Fichier PDF / Drive';
+      default: return 'Site Web';
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-800">Ressources Pédagogiques</h2>
+          <p className="text-slate-500">Manuels, liens utiles et documents de cours.</p>
+        </div>
+        <div className="flex gap-2 w-full md:w-auto">
+          <button
+            onClick={handleExportPDF}
+            className="flex-1 md:flex-none flex items-center justify-center space-x-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-4 py-2 rounded-lg transition-all shadow-sm active:scale-95"
+            title="Exporter la liste en PDF"
+          >
+            <Download size={18} />
+            <span className="hidden sm:inline">Exporter PDF</span>
+          </button>
+          
+          {canEdit && (
+            <button
+              onClick={() => setIsFormOpen(!isFormOpen)}
+              className="flex-1 md:flex-none flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-all shadow-sm active:scale-95"
+            >
+              <Plus size={18} />
+              <span className="hidden sm:inline">Ajouter</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Search and Filter Bar */}
+      <div className="flex flex-col md:flex-row gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
+          <input 
+            type="text" 
+            placeholder="Rechercher par titre..." 
+            className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        <div className="relative min-w-[200px]">
+          <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
+          <select
+            value={selectedSubject}
+            onChange={(e) => setSelectedSubject(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none appearance-none bg-white cursor-pointer text-slate-700"
+          >
+            <option value="">Toutes les matières</option>
+            {uniqueSubjects.map(sub => (
+              <option key={sub} value={sub}>{sub} ({getSubjectCount(sub)})</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {isFormOpen && (
+        <div className="bg-white p-6 rounded-xl border border-indigo-100 shadow-lg animate-fade-in">
+          <h3 className="font-semibold text-lg mb-4">Nouvelle Ressource</h3>
+          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="md:col-span-2">
+               <label className="text-sm font-semibold text-slate-700 block mb-1">Cible</label>
+               <select 
+                  className="w-full border p-2 rounded-md focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50"
+                  value={targetClass}
+                  onChange={(e) => setTargetClass(e.target.value)}
+               >
+                 {currentUser.role === UserRole.ADMIN && <option value="">🏫 Toute l'école</option>}
+                 {classGroups
+                   .filter(g => currentUser.role === UserRole.ADMIN || g.name === currentUser.classGroup)
+                   .map(group => (
+                     <option key={group.id} value={group.name}>🎓 {group.name}</option>
+                 ))}
+               </select>
+            </div>
+
+            <div className="md:col-span-2 flex gap-4 bg-slate-50 p-3 rounded-lg border border-slate-100">
+               <label className="flex items-center gap-2 cursor-pointer">
+                 <input type="radio" name="resType" value="LINK" checked={type === 'LINK'} onChange={() => setType('LINK')} className="text-indigo-600 focus:ring-indigo-500" />
+                 <span className="text-sm font-medium">Site Web</span>
+               </label>
+               <label className="flex items-center gap-2 cursor-pointer">
+                 <input type="radio" name="resType" value="BOOK" checked={type === 'BOOK'} onChange={() => setType('BOOK')} className="text-indigo-600 focus:ring-indigo-500" />
+                 <span className="text-sm font-medium">Livre</span>
+               </label>
+               <label className="flex items-center gap-2 cursor-pointer">
+                 <input type="radio" name="resType" value="FILE" checked={type === 'FILE'} onChange={() => setType('FILE')} className="text-indigo-600 focus:ring-indigo-500" />
+                 <span className="text-sm font-medium">Fichier / PDF</span>
+               </label>
+            </div>
+
+            <input type="text" required placeholder="Titre de la ressource" className="w-full border p-2 rounded-md" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <input type="text" required placeholder="Matière (ex: Maths, Histoire)" className="w-full border p-2 rounded-md" value={subject} onChange={(e) => setSubject(e.target.value)} />
+            
+            <div className="md:col-span-2">
+               <input 
+                  type="text" 
+                  required 
+                  placeholder={type === 'BOOK' ? "Auteur, Édition, ISBN..." : "https://..."} 
+                  className="w-full border p-2 rounded-md" 
+                  value={content} 
+                  onChange={(e) => setContent(e.target.value)} 
+               />
+               {type !== 'BOOK' && <p className="text-xs text-slate-400 mt-1">Collez l'URL complète (http://...)</p>}
+            </div>
+
+            <textarea placeholder="Description optionnelle..." className="md:col-span-2 border p-2 rounded-md h-20" value={description} onChange={(e) => setDescription(e.target.value)} />
+
+            <div className="md:col-span-2 flex justify-end space-x-2">
+              <button type="button" onClick={() => setIsFormOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-md">Annuler</button>
+              <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Ajouter</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredResources.map((res) => {
+          // Permission Checks
+          const canDelete = currentUser.role === UserRole.ADMIN || 
+                            (currentUser.role === UserRole.RESPONSABLE && res.targetClass === currentUser.classGroup);
+
+          return (
+            <div key={res.id} className="bg-white rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow flex flex-col overflow-hidden">
+               <div className="p-5 flex-1">
+                  <div className="flex justify-between items-start mb-3">
+                     <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                        {getTypeIcon(res.type)}
+                     </div>
+                     {res.targetClass && (
+                        <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-bold flex items-center">
+                          <Users size={10} className="mr-1" /> {res.targetClass}
+                        </span>
+                     )}
+                  </div>
+                  
+                  <h3 className="font-bold text-lg text-slate-800 line-clamp-2 mb-1">{res.title}</h3>
+                  <span className="text-xs font-semibold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-100 uppercase tracking-wide">
+                    {res.subject}
+                  </span>
+
+                  {res.description && (
+                    <p className="text-sm text-slate-500 mt-3 line-clamp-3">{res.description}</p>
+                  )}
+                  
+                  {res.type === 'BOOK' && (
+                    <div className="mt-4 p-2 bg-orange-50 rounded border border-orange-100 text-sm text-orange-800 flex items-start gap-2">
+                       <Book size={16} className="mt-0.5 flex-shrink-0" />
+                       <span className="italic">{res.content}</span>
+                    </div>
+                  )}
+               </div>
+
+               <div className="bg-slate-50 p-3 border-t border-slate-100 flex justify-between items-center">
+                  {res.type !== 'BOOK' ? (
+                     <a 
+                       href={res.content} 
+                       target="_blank" 
+                       rel="noopener noreferrer" 
+                       className="text-sm font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                     >
+                       <ExternalLink size={14} /> Accéder
+                     </a>
+                  ) : (
+                     <span className="text-xs text-slate-400 font-medium">{getTypeLabel(res.type)}</span>
+                  )}
+
+                  {canDelete && (
+                    <button 
+                      onClick={() => handleDelete(res.id)} 
+                      className="text-slate-400 hover:text-red-500 p-1 hover:bg-red-50 rounded transition-colors"
+                      title="Supprimer"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
+               </div>
+            </div>
+          );
+        })}
+        {filteredResources.length === 0 && (
+          <div className="col-span-full py-10 text-center text-slate-400 border border-dashed border-slate-300 rounded-xl bg-slate-50">
+             <div className="mx-auto bg-slate-100 p-3 rounded-full w-fit mb-3">
+               <Book size={24} />
+             </div>
+             <p>Aucune ressource trouvée.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

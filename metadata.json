@@ -1,0 +1,5 @@
+{
+  "name": "ClassPoll+ Multi-Rôles",
+  "description": "A comprehensive educational dashboard for managing classes, exams, polls, and announcements with role-based access control (Admin, Supervisor, Student).",
+  "requestFramePermissions": []
+}
