@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { User, UserRole, ViewState, Poll, Exam, Announcement, Resource, AppNotification, SchoolSettings, ClassGroup } from './types';
 import { Layout } from './components/Layout';
@@ -441,13 +440,15 @@ const App: React.FC = () => {
     const pollToUpdate = polls.find(p => p.id === pollId);
     if (!pollToUpdate) return;
 
-    const previousOptionId = pollToUpdate.userVotes[currentUser.id];
+    // Ensure userVotes is an object
+    const currentUserVotes = pollToUpdate.userVotes || {};
+    const previousOptionId = currentUserVotes[currentUser.id];
     
     // Prevent voting for the same option again
     if (previousOptionId === optionId) return;
 
     // 2. Compute new state
-    const updatedUserVotes = { ...pollToUpdate.userVotes, [currentUser.id]: optionId };
+    const updatedUserVotes = { ...currentUserVotes, [currentUser.id]: optionId };
     
     const updatedOptions = pollToUpdate.options.map(o => {
       let voteCount = o.votes;
@@ -659,14 +660,25 @@ const App: React.FC = () => {
   };
 
   const addClassGroup = async (name: string) => {
+    // 1. Check for duplicates locally to provide immediate feedback
+    if (classGroups.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+        alert("Cette classe existe déjà.");
+        return;
+    }
+
     const newId = generateId();
     const newClass = { id: newId, name };
-    setClassGroups(prev => [...prev, newClass]);
+    
+    // Optimistic Update
+    setClassGroups(prev => [...prev, newClass].sort((a, b) => a.name.localeCompare(b.name)));
+    
     try {
       const { error } = await supabase.from('class_groups').insert(newClass);
       if (error) throw error;
     } catch (err: any) {
-      alert(`Erreur ajout classe: ${err.message}`);
+      console.error("Failed to add class", err);
+      // Show clearer error message
+      alert(`Impossible d'ajouter la classe. La base de données a refusé l'enregistrement.\n\nCode erreur: ${err.code}\nMessage: ${err.message}\n\nSOLUTION : Exécutez le script SQL pour donner la permission 'INSERT' sur 'class_groups'.`);
       setClassGroups(prev => prev.filter(c => c.id !== newId));
     }
   };
