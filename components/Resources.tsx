@@ -72,12 +72,12 @@ export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, cl
 
     // Title
     doc.setFontSize(18);
-    doc.setTextColor(40);
+    doc.setTextColor(40, 40, 40);
     doc.text("Liste des Ressources Pédagogiques", 14, 22);
 
     // Meta-data
     doc.setFontSize(11);
-    doc.setTextColor(100);
+    doc.setTextColor(100, 100, 100);
     const dateStr = new Date().toLocaleDateString('fr-FR');
     doc.text(`Généré le ${dateStr} par ${currentUser.name}`, 14, 30);
     if (selectedSubject) {
