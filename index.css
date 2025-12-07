@@ -127,3 +127,38 @@ body {
 .delay-75 { animation-delay: 75ms; }
 .delay-100 { animation-delay: 100ms; }
 .delay-150 { animation-delay: 150ms; }
+
+/* --- PRINT STYLES --- */
+@media print {
+  /* Hide UI elements */
+  aside, 
+  nav, 
+  header, 
+  .md\:hidden, /* Mobile Top Bar */
+  .md\:ml-72 /* Remove sidebar margin */
+  {
+    display: none !important;
+  }
+  
+  /* Reset Layout */
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  body {
+    background: white;
+    color: black;
+  }
+
+  /* Force print visibility for .print:block */
+  .print\:block {
+    display: block !important;
+  }
+
+  /* Force hide for .print:hidden */
+  .print\:hidden {
+    display: none !important;
+  }
+}

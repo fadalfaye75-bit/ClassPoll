@@ -1,19 +1,23 @@
-import React, { useState } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { Resource, User, UserRole, ClassGroup } from '../types';
-import { Book, Link as LinkIcon, FileText, Plus, Trash2, ExternalLink, Globe, Search, Users, Filter, Download } from 'lucide-react';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { Book, Link as LinkIcon, FileText, Plus, Trash2, ExternalLink, Globe, Search, Users, Filter, Printer, Pencil, MoreVertical } from 'lucide-react';
 
 interface ResourcesProps {
   currentUser: User;
   resources: Resource[];
   classGroups: ClassGroup[];
   onAdd: (resource: Omit<Resource, 'id' | 'createdAt'>) => void;
+  onUpdate: (resource: Resource) => void;
   onDelete: (id: string) => void;
 }
 
-export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, classGroups, onAdd, onDelete }) => {
+export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, classGroups, onAdd, onUpdate, onDelete }) => {
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
   
@@ -27,29 +31,81 @@ export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, cl
 
   const canEdit = [UserRole.ADMIN, UserRole.RESPONSABLE].includes(currentUser.role);
 
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setActiveMenuId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  // Helper function
+  const getTypeLabel = (type: string) => {
+    switch (type) {
+      case 'BOOK': return 'Livre / Manuel';
+      case 'FILE': return 'Fichier PDF / Drive';
+      default: return 'Site Web';
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onAdd({
-      title,
-      type,
-      content,
-      subject,
-      description,
-      targetClass: targetClass || undefined
-    });
-    // Reset
+    if (editingId) {
+        // Update
+        const existingRes = resources.find(r => r.id === editingId);
+        if (existingRes) {
+            onUpdate({
+                ...existingRes,
+                title,
+                type,
+                content,
+                subject,
+                description,
+                targetClass: targetClass || undefined
+            });
+        }
+    } else {
+        // Create
+        onAdd({
+          title,
+          type,
+          content,
+          subject,
+          description,
+          targetClass: targetClass || undefined
+        });
+    }
+    closeForm();
+  };
+
+  const handleEdit = (res: Resource) => {
+      setEditingId(res.id);
+      setTitle(res.title);
+      setType(res.type);
+      setContent(res.content);
+      setSubject(res.subject);
+      setDescription(res.description || '');
+      setTargetClass(res.targetClass || '');
+      setIsFormOpen(true);
+      setActiveMenuId(null);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const closeForm = () => {
     setIsFormOpen(false);
-    setTitle('');
-    setContent('');
-    setSubject('');
-    setDescription('');
-    setTargetClass('');
+    setEditingId(null);
+    setTitle(''); setContent(''); setSubject(''); setDescription(''); setTargetClass('');
   };
 
   const handleDelete = (id: string) => {
     if (window.confirm("Voulez-vous vraiment supprimer cette ressource ? Cette action est irréversible.")) {
       onDelete(id);
     }
+    setActiveMenuId(null);
   };
 
   // Extract unique subjects for the filter dropdown
@@ -66,43 +122,8 @@ export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, cl
     return matchesSearch && matchesSubject;
   });
 
-  const handleExportPDF = () => {
-    // Ensure jsPDF is instantiated correctly
-    const doc = new jsPDF();
-
-    // Title
-    doc.setFontSize(18);
-    doc.setTextColor(40, 40, 40);
-    doc.text("Liste des Ressources Pédagogiques", 14, 22);
-
-    // Meta-data
-    doc.setFontSize(11);
-    doc.setTextColor(100, 100, 100);
-    const dateStr = new Date().toLocaleDateString('fr-FR');
-    doc.text(`Généré le ${dateStr} par ${currentUser.name}`, 14, 30);
-    if (selectedSubject) {
-      doc.text(`Filtre : ${selectedSubject}`, 14, 36);
-    }
-
-    // Table Data
-    const tableData = filteredResources.map(row => [
-      row.title,
-      row.subject,
-      getTypeLabel(row.type),
-      row.targetClass || 'Toute l\'école',
-      row.content
-    ]);
-
-    // Generate Table
-    autoTable(doc, {
-      head: [['Titre', 'Matière', 'Type', 'Cible', 'Contenu/Lien']],
-      body: tableData,
-      startY: 45,
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [79, 70, 229] }, // Indigo-600
-    });
-
-    doc.save(`ressources_classpoll_${dateStr.replace(/\//g, '-')}.pdf`);
+  const handlePrint = () => {
+    window.print();
   };
 
   const getTypeIcon = (type: string) => {
@@ -113,34 +134,33 @@ export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, cl
     }
   };
 
-  const getTypeLabel = (type: string) => {
-    switch (type) {
-      case 'BOOK': return 'Livre / Manuel';
-      case 'FILE': return 'Fichier PDF / Drive';
-      default: return 'Site Web';
-    }
-  };
-
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      {/* --- PRINT ONLY HEADER --- */}
+      <div className="hidden print:block mb-8">
+        <h1 className="text-2xl font-bold">Liste des Ressources Pédagogiques</h1>
+        <p className="text-sm text-gray-500">Généré le {new Date().toLocaleDateString('fr-FR')} par {currentUser.name}</p>
+        {selectedSubject && <p className="text-sm font-semibold mt-2">Filtre: {selectedSubject}</p>}
+      </div>
+
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 print:hidden">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Ressources Pédagogiques</h2>
           <p className="text-slate-500">Manuels, liens utiles et documents de cours.</p>
         </div>
         <div className="flex gap-2 w-full md:w-auto">
           <button
-            onClick={handleExportPDF}
+            onClick={handlePrint}
             className="flex-1 md:flex-none flex items-center justify-center space-x-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-4 py-2 rounded-lg transition-all shadow-sm active:scale-95"
-            title="Exporter la liste en PDF"
+            title="Imprimer ou Enregistrer en PDF"
           >
-            <Download size={18} />
-            <span className="hidden sm:inline">Exporter PDF</span>
+            <Printer size={18} />
+            <span className="hidden sm:inline">Imprimer / PDF</span>
           </button>
           
           {canEdit && (
             <button
-              onClick={() => setIsFormOpen(!isFormOpen)}
+              onClick={() => { closeForm(); setIsFormOpen(!isFormOpen); }}
               className="flex-1 md:flex-none flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-all shadow-sm active:scale-95"
             >
               <Plus size={18} />
@@ -150,8 +170,8 @@ export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, cl
         </div>
       </div>
 
-      {/* Search and Filter Bar */}
-      <div className="flex flex-col md:flex-row gap-4">
+      {/* Search and Filter Bar - HIDDEN ON PRINT */}
+      <div className="flex flex-col md:flex-row gap-4 print:hidden">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
           <input 
@@ -177,9 +197,10 @@ export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, cl
         </div>
       </div>
 
+      {/* FORM - HIDDEN ON PRINT */}
       {isFormOpen && (
-        <div className="bg-white p-6 rounded-xl border border-indigo-100 shadow-lg animate-fade-in">
-          <h3 className="font-semibold text-lg mb-4">Nouvelle Ressource</h3>
+        <div className="bg-white p-6 rounded-xl border border-indigo-100 shadow-lg animate-fade-in print:hidden">
+          <h3 className="font-semibold text-lg mb-4 text-indigo-700">{editingId ? 'Modifier la ressource' : 'Nouvelle Ressource'}</h3>
           <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="md:col-span-2">
                <label className="text-sm font-semibold text-slate-700 block mb-1">Cible</label>
@@ -194,6 +215,9 @@ export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, cl
                    .map(group => (
                      <option key={group.id} value={group.name}>🎓 {group.name}</option>
                  ))}
+                 {!currentUser.classGroup && currentUser.role !== UserRole.ADMIN && (
+                   <option value="" disabled>🚫 Aucune classe assignée à votre compte</option>
+                 )}
                </select>
             </div>
 
@@ -230,21 +254,25 @@ export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, cl
             <textarea placeholder="Description optionnelle..." className="md:col-span-2 border p-2 rounded-md h-20" value={description} onChange={(e) => setDescription(e.target.value)} />
 
             <div className="md:col-span-2 flex justify-end space-x-2">
-              <button type="button" onClick={() => setIsFormOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-md">Annuler</button>
-              <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Ajouter</button>
+              <button type="button" onClick={closeForm} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-md">Annuler</button>
+              <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">
+                {editingId ? 'Mettre à jour' : 'Ajouter'}
+              </button>
             </div>
           </form>
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {/* --- SCREEN VIEW (CARDS) --- */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 print:hidden">
         {filteredResources.map((res) => {
           // Permission Checks
-          const canDelete = currentUser.role === UserRole.ADMIN || 
-                            (currentUser.role === UserRole.RESPONSABLE && res.targetClass === currentUser.classGroup);
+          const canManage = currentUser.role === UserRole.ADMIN || 
+                            (currentUser.role === UserRole.RESPONSABLE && res.targetClass === currentUser.classGroup) || 
+                            (res.createdById === currentUser.id);
 
           return (
-            <div key={res.id} className="bg-white rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow flex flex-col overflow-hidden">
+            <div key={res.id} className={`bg-white rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow flex flex-col relative ${activeMenuId === res.id ? 'z-50' : 'z-0'}`}>
                <div className="p-5 flex-1">
                   <div className="flex justify-between items-start mb-3">
                      <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
@@ -280,7 +308,7 @@ export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, cl
                        href={res.content} 
                        target="_blank" 
                        rel="noopener noreferrer" 
-                       className="text-sm font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                       className="text-sm font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1 z-10 relative"
                      >
                        <ExternalLink size={14} /> Accéder
                      </a>
@@ -288,14 +316,33 @@ export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, cl
                      <span className="text-xs text-slate-400 font-medium">{getTypeLabel(res.type)}</span>
                   )}
 
-                  {canDelete && (
-                    <button 
-                      onClick={() => handleDelete(res.id)} 
-                      className="text-slate-400 hover:text-red-500 p-1 hover:bg-red-50 rounded transition-colors"
-                      title="Supprimer"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                  {canManage && (
+                    <div className="relative z-20">
+                       <button 
+                           type="button"
+                           onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === res.id ? null : res.id); }}
+                           className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-all"
+                        >
+                           <MoreVertical size={20} />
+                        </button>
+
+                        {activeMenuId === res.id && (
+                           <div ref={menuRef} className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-lg shadow-xl border border-slate-100 z-50 animate-in fade-in zoom-in-95 origin-bottom-right">
+                              <button 
+                                 onClick={(e) => { e.stopPropagation(); handleEdit(res); }}
+                                 className="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 first:rounded-t-lg"
+                              >
+                                 <Pencil size={16} /> Modifier
+                              </button>
+                              <button 
+                                 onClick={(e) => { e.stopPropagation(); handleDelete(res.id); }}
+                                 className="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 last:rounded-b-lg border-t border-slate-50"
+                              >
+                                 <Trash2 size={16} /> Supprimer
+                              </button>
+                           </div>
+                        )}
+                    </div>
                   )}
                </div>
             </div>
@@ -309,6 +356,32 @@ export const Resources: React.FC<ResourcesProps> = ({ currentUser, resources, cl
              <p>Aucune ressource trouvée.</p>
           </div>
         )}
+      </div>
+
+      {/* --- PRINT ONLY VIEW (CLEAN TABLE) --- */}
+      <div className="hidden print:block">
+         <table className="w-full text-left border-collapse">
+            <thead>
+               <tr className="border-b-2 border-slate-800">
+                  <th className="py-2 text-sm font-bold text-slate-900">Matière</th>
+                  <th className="py-2 text-sm font-bold text-slate-900">Titre</th>
+                  <th className="py-2 text-sm font-bold text-slate-900">Type</th>
+                  <th className="py-2 text-sm font-bold text-slate-900">Cible</th>
+                  <th className="py-2 text-sm font-bold text-slate-900">Contenu / Lien</th>
+               </tr>
+            </thead>
+            <tbody>
+               {filteredResources.map((res) => (
+                  <tr key={res.id} className="border-b border-slate-300">
+                     <td className="py-3 text-sm">{res.subject}</td>
+                     <td className="py-3 text-sm font-semibold">{res.title}</td>
+                     <td className="py-3 text-sm">{getTypeLabel(res.type)}</td>
+                     <td className="py-3 text-sm">{res.targetClass || 'Tous'}</td>
+                     <td className="py-3 text-xs font-mono break-all">{res.content}</td>
+                  </tr>
+               ))}
+            </tbody>
+         </table>
       </div>
     </div>
   );

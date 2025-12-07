@@ -1,3 +1,4 @@
+
 export enum UserRole {
   ADMIN = 'ADMIN',
   RESPONSABLE = 'RESPONSABLE',
@@ -53,7 +54,7 @@ export interface Poll {
   createdAt: Date;
   expiresAt: Date;
   createdById: string;
-  votedUserIds: string[]; // Track who voted to prevent duplicates
+  userVotes: Record<string, string>; // Map UserId -> OptionId (Tracks WHO voted for WHAT)
   targetClass?: string; // If undefined/null, visible to all
 }
 
@@ -66,6 +67,7 @@ export interface Resource {
   subject: string;
   targetClass?: string;
   createdAt: Date;
+  createdById?: string; // Added to track ownership
 }
 
 export type ViewState = 'DASHBOARD' | 'INFOS' | 'DS' | 'POLLS' | 'RESOURCES' | 'USERS' | 'SETTINGS';
@@ -82,6 +84,7 @@ export interface AppNotification {
 export interface SchoolSettings {
   schoolName: string;
   themeColor: string;
+  logoUrl?: string;
 }
 
 export interface ClassGroup {

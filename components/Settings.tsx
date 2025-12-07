@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { SchoolSettings, ClassGroup } from '../types';
-import { Building, Plus, Trash2, Save, Users, Settings as SettingsIcon, ArrowRight } from 'lucide-react';
+import { Building, Plus, Trash2, Save, Users, Settings as SettingsIcon, ArrowRight, Image } from 'lucide-react';
 
 interface SettingsProps {
   settings: SchoolSettings;
@@ -20,11 +21,12 @@ export const Settings: React.FC<SettingsProps> = ({
   onNavigateToUsers
 }) => {
   const [schoolName, setSchoolName] = useState(settings.schoolName);
+  const [logoUrl, setLogoUrl] = useState(settings.logoUrl || '');
   const [newClassName, setNewClassName] = useState('');
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
-    onUpdateSettings({ ...settings, schoolName });
+    onUpdateSettings({ ...settings, schoolName, logoUrl: logoUrl || undefined });
     alert("Paramètres de l'école mis à jour !");
   };
 
@@ -60,6 +62,26 @@ export const Settings: React.FC<SettingsProps> = ({
               placeholder="Ex: Lycée Jean Mermoz"
             />
           </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1">URL du Logo (Optionnel)</label>
+            <div className="flex gap-2 items-center">
+              <input 
+                type="text" 
+                value={logoUrl}
+                onChange={(e) => setLogoUrl(e.target.value)}
+                className="w-full border p-2 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                placeholder="https://..."
+              />
+              {logoUrl && (
+                <div className="h-10 w-10 border rounded bg-slate-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+                  <img src={logoUrl} alt="Preview" className="h-full w-full object-contain" />
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 mt-1">Lien direct vers une image (PNG/JPG).</p>
+          </div>
+
           <button 
             type="submit" 
             className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors"

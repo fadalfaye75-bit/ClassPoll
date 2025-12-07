@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { User, UserRole, ViewState, Poll, Exam, Announcement, Resource, AppNotification, SchoolSettings, ClassGroup } from './types';
 import { Layout } from './components/Layout';
@@ -25,6 +26,7 @@ const DEFAULT_ADMIN: User = {
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState<ViewState>('DASHBOARD');
+  const [viewHistory, setViewHistory] = useState<ViewState[]>([]); // Navigation History Stack
   
   // Data State
   const [users, setUsers] = useState<User[]>([]);
@@ -55,7 +57,8 @@ const App: React.FC = () => {
       if (settingsData) {
         setSchoolSettings({ 
           schoolName: settingsData.school_name || 'ClassPoll+', 
-          themeColor: settingsData.theme_color || 'indigo' 
+          themeColor: settingsData.theme_color || 'indigo',
+          logoUrl: settingsData.logo_url
         });
         document.title = settingsData.school_name || 'ClassPoll+';
       }
@@ -134,26 +137,37 @@ const App: React.FC = () => {
       // 4. Fetch Polls
       const { data: pollData, error: pollError } = await supabase.from('polls').select('*');
       if (pollError) throw pollError;
-      setPolls((pollData || []).map((p: any) => ({
-        ...p,
-        isAnonymous: p.is_anonymous,
-        createdAt: new Date(p.created_at),
-        expiresAt: new Date(p.expires_at),
-        createdById: p.created_by_id,
-        votedUserIds: p.voted_user_ids || [],
-        targetClass: p.target_class,
-        options: p.options || []
-      })));
+      
+      setPolls((pollData || []).map((p: any) => {
+        // Handle Migration: If DB has array (old format), convert to empty object or ignore
+        // If DB has object (new format), use it
+        let votesMap: Record<string, string> = {};
+        if (p.voted_user_ids && !Array.isArray(p.voted_user_ids)) {
+            votesMap = p.voted_user_ids;
+        }
+
+        return {
+          ...p,
+          isAnonymous: p.is_anonymous,
+          createdAt: new Date(p.created_at),
+          expiresAt: new Date(p.expires_at),
+          createdById: p.created_by_id,
+          userVotes: votesMap, // New field
+          targetClass: p.target_class,
+          options: p.options || []
+        };
+      }));
 
       // 5. Fetch Resources
       const { data: resData, error: resError } = await supabase.from('resources').select('*');
-      if (resError && resError.code !== '42P01') { // Ignore "table not found" for now if SQL not run
+      if (resError && resError.code !== '42P01') { 
          console.error("Resources fetch error", resError);
       } else if (resData) {
         setResources((resData || []).map((r: any) => ({
           ...r,
           targetClass: r.target_class,
-          createdAt: new Date(r.created_at)
+          createdAt: new Date(r.created_at),
+          createdById: r.created_by_id
         })));
       }
 
@@ -169,8 +183,28 @@ const App: React.FC = () => {
     fetchData();
   }, [fetchData]);
 
+  // --- NAVIGATION LOGIC ---
+  const changeView = (newView: ViewState) => {
+    if (newView === currentView) return;
+    // Push current view to history before changing
+    setViewHistory(prev => [...prev, currentView]);
+    setCurrentView(newView);
+  };
+
+  const navigateBack = () => {
+    if (viewHistory.length === 0) {
+      setCurrentView('DASHBOARD');
+      return;
+    }
+    const newHistory = [...viewHistory];
+    const lastView = newHistory.pop();
+    setViewHistory(newHistory);
+    if (lastView) {
+      setCurrentView(lastView);
+    }
+  };
+
   // --- Filtering Logic for Students ---
-  // Students should ONLY see items for their class OR items for "All Schools" (targetClass is null)
   const filteredAnnouncements = useMemo(() => {
     if (!currentUser || currentUser.role === UserRole.ADMIN || currentUser.role === UserRole.RESPONSABLE) return announcements;
     return announcements.filter(a => !a.targetClass || a.targetClass === currentUser.classGroup);
@@ -198,6 +232,7 @@ const App: React.FC = () => {
       localStorage.setItem('classpoll_session', JSON.stringify(user));
       setCurrentUser(user);
       setCurrentView('DASHBOARD');
+      setViewHistory([]); // Reset history on login
       return true;
     }
     return false;
@@ -206,9 +241,10 @@ const App: React.FC = () => {
   const handleLogout = () => {
     localStorage.removeItem('classpoll_session');
     setCurrentUser(null);
+    setViewHistory([]);
   };
 
-  // --- Actions with Supabase ---
+  // --- Optimistic Actions with Supabase ---
 
   const addAnnouncement = async (data: Omit<Announcement, 'id' | 'authorId' | 'authorName'>) => {
     if (!currentUser) return;
@@ -222,22 +258,59 @@ const App: React.FC = () => {
 
     setAnnouncements(prev => [newAnn, ...prev]);
 
-    await supabase.from('announcements').insert({
-      id: newId,
-      title: data.title,
-      subject: data.subject,
-      meet_link: data.meetLink,
-      date: data.date.toISOString(),
-      is_urgent: data.isUrgent,
-      target_class: data.targetClass,
-      author_id: currentUser.id,
-      author_name: currentUser.name
-    });
+    try {
+      const { error } = await supabase.from('announcements').insert({
+        id: newId,
+        title: data.title,
+        subject: data.subject,
+        meet_link: data.meetLink,
+        date: data.date.toISOString(),
+        is_urgent: data.isUrgent,
+        target_class: data.targetClass,
+        author_id: currentUser.id,
+        author_name: currentUser.name
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Failed to add announcement", err);
+      alert(`Erreur lors de la publication: ${err.message || 'Erreur inconnue'}`);
+      setAnnouncements(prev => prev.filter(a => a.id !== newId));
+    }
+  };
+
+  const updateAnnouncement = async (updatedAnn: Omit<Announcement, 'authorName'>) => {
+    const prevAnnouncements = [...announcements];
+    setAnnouncements(prev => prev.map(a => a.id === updatedAnn.id ? { ...a, ...updatedAnn } : a));
+
+    try {
+      const { error } = await supabase.from('announcements').update({
+        title: updatedAnn.title,
+        subject: updatedAnn.subject,
+        meet_link: updatedAnn.meetLink,
+        date: updatedAnn.date.toISOString(),
+        is_urgent: updatedAnn.isUrgent,
+        target_class: updatedAnn.targetClass
+      }).eq('id', updatedAnn.id);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Update failed", err);
+      alert(`Erreur lors de la mise à jour: ${err.message || 'Erreur inconnue'}`);
+      setAnnouncements(prevAnnouncements);
+    }
   };
 
   const deleteAnnouncement = async (id: string) => {
+    const prevAnnouncements = [...announcements];
     setAnnouncements(prev => prev.filter(a => a.id !== id));
-    await supabase.from('announcements').delete().eq('id', id);
+
+    try {
+      const { error } = await supabase.from('announcements').delete().eq('id', id);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Delete failed", err);
+      alert(`Impossible de supprimer l'annonce. Détails: ${err.message || 'Erreur inconnue'}`);
+      setAnnouncements(prevAnnouncements);
+    }
   };
 
   const addExam = async (data: Omit<Exam, 'id' | 'createdById'>) => {
@@ -251,25 +324,63 @@ const App: React.FC = () => {
 
     setExams(prev => [...prev, newExam]);
 
-    await supabase.from('exams').insert({
-      id: newId,
-      subject: data.subject,
-      date: data.date.toISOString(),
-      start_time: data.startTime,
-      duration_minutes: data.durationMinutes,
-      room: data.room,
-      notes: data.notes,
-      target_class: data.targetClass,
-      created_by_id: currentUser.id
-    });
+    try {
+      const { error } = await supabase.from('exams').insert({
+        id: newId,
+        subject: data.subject,
+        date: data.date.toISOString(),
+        start_time: data.startTime,
+        duration_minutes: data.durationMinutes,
+        room: data.room,
+        notes: data.notes,
+        target_class: data.targetClass,
+        created_by_id: currentUser.id
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Failed to add exam", err);
+      alert(`Erreur lors de l'ajout de l'examen: ${err.message}`);
+      setExams(prev => prev.filter(e => e.id !== newId));
+    }
+  };
+
+  const updateExam = async (updatedExam: Exam) => {
+    const prevExams = [...exams];
+    setExams(prev => prev.map(e => e.id === updatedExam.id ? updatedExam : e));
+
+    try {
+      const { error } = await supabase.from('exams').update({
+        subject: updatedExam.subject,
+        date: updatedExam.date.toISOString(),
+        start_time: updatedExam.startTime,
+        duration_minutes: updatedExam.durationMinutes,
+        room: updatedExam.room,
+        notes: updatedExam.notes,
+        target_class: updatedExam.targetClass
+      }).eq('id', updatedExam.id);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Update exam failed", err);
+      alert(`Erreur lors de la mise à jour de l'examen: ${err.message}`);
+      setExams(prevExams);
+    }
   };
 
   const deleteExam = async (id: string) => {
+    const prevExams = [...exams];
     setExams(prev => prev.filter(e => e.id !== id));
-    await supabase.from('exams').delete().eq('id', id);
+
+    try {
+      const { error } = await supabase.from('exams').delete().eq('id', id);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Delete failed", err);
+      alert(`Impossible de supprimer l'examen. Détails: ${err.message}`);
+      setExams(prevExams);
+    }
   };
 
-  const addPoll = async (data: Omit<Poll, 'id' | 'createdById' | 'createdAt' | 'votedUserIds'>) => {
+  const addPoll = async (data: Omit<Poll, 'id' | 'createdById' | 'createdAt' | 'userVotes'>) => {
     if (!currentUser) return;
     const newId = generateId();
     const now = new Date();
@@ -278,302 +389,478 @@ const App: React.FC = () => {
       id: newId,
       createdById: currentUser.id,
       createdAt: now,
-      votedUserIds: []
+      userVotes: {}
     };
 
     setPolls(prev => [newPoll, ...prev]);
 
-    await supabase.from('polls').insert({
-      id: newId,
-      title: data.title,
-      options: data.options,
-      is_anonymous: data.isAnonymous,
-      created_at: now.toISOString(),
-      expires_at: data.expiresAt.toISOString(),
-      target_class: data.targetClass,
-      created_by_id: currentUser.id,
-      voted_user_ids: []
-    });
+    try {
+      const { error } = await supabase.from('polls').insert({
+        id: newId,
+        title: data.title,
+        options: data.options,
+        is_anonymous: data.isAnonymous,
+        created_at: now.toISOString(),
+        expires_at: data.expiresAt.toISOString(),
+        target_class: data.targetClass,
+        created_by_id: currentUser.id,
+        voted_user_ids: {} // Initialize as empty object
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Failed to add poll", err);
+      alert(`Erreur lors de la création du sondage: ${err.message}`);
+      setPolls(prev => prev.filter(p => p.id !== newId));
+    }
   };
 
+  const updatePoll = async (updatedPoll: Poll) => {
+    const prevPolls = [...polls];
+    setPolls(prev => prev.map(p => p.id === updatedPoll.id ? updatedPoll : p));
+
+    try {
+      const { error } = await supabase.from('polls').update({
+        title: updatedPoll.title,
+        options: updatedPoll.options,
+        is_anonymous: updatedPoll.isAnonymous,
+        target_class: updatedPoll.targetClass
+      }).eq('id', updatedPoll.id);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Update poll failed", err);
+      alert(`Erreur lors de la mise à jour du sondage: ${err.message}`);
+      setPolls(prevPolls);
+    }
+  };
+
+  // CORRECTED VOTE LOGIC: Handle changing votes with robust error handling
   const votePoll = async (pollId: string, optionId: string) => {
     if (!currentUser) return;
+    
+    // 1. Identify poll and changes
     const pollToUpdate = polls.find(p => p.id === pollId);
-    if (!pollToUpdate || pollToUpdate.votedUserIds.includes(currentUser.id)) return;
+    if (!pollToUpdate) return;
 
-    const updatedVotedIds = [...pollToUpdate.votedUserIds, currentUser.id];
-    const updatedOptions = pollToUpdate.options.map(o => 
-      o.id === optionId ? { ...o, votes: o.votes + 1 } : o
-    );
+    const previousOptionId = pollToUpdate.userVotes[currentUser.id];
+    
+    // Prevent voting for the same option again
+    if (previousOptionId === optionId) return;
 
-    setPolls(prev => prev.map(p => {
-      if (p.id !== pollId) return p;
-      return { ...p, votedUserIds: updatedVotedIds, options: updatedOptions };
-    }));
+    // 2. Compute new state
+    const updatedUserVotes = { ...pollToUpdate.userVotes, [currentUser.id]: optionId };
+    
+    const updatedOptions = pollToUpdate.options.map(o => {
+      let voteCount = o.votes;
+      // Decrement old vote (if any)
+      if (o.id === previousOptionId) voteCount = Math.max(0, voteCount - 1);
+      // Increment new vote
+      if (o.id === optionId) voteCount += 1;
+      return { ...o, votes: voteCount };
+    });
 
-    await supabase.from('polls').update({
-      voted_user_ids: updatedVotedIds,
-      options: updatedOptions
-    }).eq('id', pollId);
+    const updatedPoll = { ...pollToUpdate, userVotes: updatedUserVotes, options: updatedOptions };
+
+    // 3. Optimistic Update
+    setPolls(prev => prev.map(p => p.id === pollId ? updatedPoll : p));
+
+    try {
+      // 4. Send to Supabase
+      const { error } = await supabase.from('polls').update({
+        voted_user_ids: updatedUserVotes, // Save object map
+        options: updatedOptions
+      }).eq('id', pollId);
+      
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Vote failed", err);
+      alert(`Erreur lors du vote: ${err.message}`);
+      // 5. Safe Rollback: Refetch data instead of restoring state to avoid Date object issues
+      await fetchData(); 
+    }
   };
 
   const deletePoll = async (id: string) => {
+    const prevPolls = [...polls];
     setPolls(prev => prev.filter(p => p.id !== id));
-    await supabase.from('polls').delete().eq('id', id);
+
+    try {
+      const { error } = await supabase.from('polls').delete().eq('id', id);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Delete poll failed", err);
+      alert(`Impossible de supprimer le sondage. Détails: ${err.message}`);
+      setPolls(prevPolls);
+    }
   };
 
+  // --- RESOURCES ---
+
   const addResource = async (data: Omit<Resource, 'id' | 'createdAt'>) => {
+    if (!currentUser) return;
     const newId = generateId();
+    const now = new Date();
     const newRes: Resource = {
       ...data,
       id: newId,
-      createdAt: new Date()
+      createdAt: now,
+      createdById: currentUser.id
     };
+
     setResources(prev => [newRes, ...prev]);
-    await supabase.from('resources').insert({
-      id: newId,
-      title: data.title,
-      type: data.type,
-      content: data.content,
-      subject: data.subject,
-      description: data.description,
-      target_class: data.targetClass
-    });
+
+    try {
+      const { error } = await supabase.from('resources').insert({
+        id: newId,
+        title: data.title,
+        type: data.type,
+        content: data.content,
+        subject: data.subject,
+        description: data.description,
+        target_class: data.targetClass,
+        created_at: now.toISOString(),
+        created_by_id: currentUser.id
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Add resource failed", err);
+      alert(`Erreur: ${err.message}`);
+      setResources(prev => prev.filter(r => r.id !== newId));
+    }
+  };
+
+  const updateResource = async (updatedRes: Resource) => {
+    const prevResources = [...resources];
+    setResources(prev => prev.map(r => r.id === updatedRes.id ? updatedRes : r));
+
+    try {
+      const { error } = await supabase.from('resources').update({
+        title: updatedRes.title,
+        type: updatedRes.type,
+        content: updatedRes.content,
+        subject: updatedRes.subject,
+        description: updatedRes.description,
+        target_class: updatedRes.targetClass
+      }).eq('id', updatedRes.id);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Update resource failed", err);
+      alert(`Erreur: ${err.message}`);
+      setResources(prevResources);
+    }
   };
 
   const deleteResource = async (id: string) => {
+    const prevResources = [...resources];
     setResources(prev => prev.filter(r => r.id !== id));
-    await supabase.from('resources').delete().eq('id', id);
+
+    try {
+      const { error } = await supabase.from('resources').delete().eq('id', id);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Delete resource failed", err);
+      alert(`Impossible de supprimer la ressource. Détails: ${err.message}`);
+      setResources(prevResources);
+    }
   };
+
+  // --- USERS MANAGEMENT ---
 
   const addUser = async (user: User) => {
     setUsers(prev => [...prev, user]);
-    await supabase.from('users').insert({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      password: user.password,
-      role: user.role,
-      class_group: user.classGroup
-    });
+    try {
+      const { error } = await supabase.from('users').insert({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        password: user.password,
+        role: user.role,
+        class_group: user.classGroup
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Add user failed", err);
+      alert(`Erreur: ${err.message}`);
+      setUsers(prev => prev.filter(u => u.id !== user.id));
+    }
   };
 
   const updateUser = async (updatedUser: User) => {
+    const prevUsers = [...users];
     setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
-    if (currentUser && currentUser.id === updatedUser.id) {
-      setCurrentUser(updatedUser);
-      localStorage.setItem('classpoll_session', JSON.stringify(updatedUser));
-    }
-    await supabase.from('users').update({
-      name: updatedUser.name,
-      email: updatedUser.email,
-      role: updatedUser.role,
-      password: updatedUser.password,
-      class_group: updatedUser.classGroup
-    }).eq('id', updatedUser.id);
-  };
 
-  const deleteUser = async (id: string) => {
-    const userToDelete = users.find(u => u.id === id);
-    if (userToDelete?.email === 'faye@eco.com') {
-      alert("Impossible de supprimer l'administrateur principal.");
-      return;
+    try {
+      const { error } = await supabase.from('users').update({
+        name: updatedUser.name,
+        email: updatedUser.email,
+        password: updatedUser.password,
+        role: updatedUser.role,
+        class_group: updatedUser.classGroup
+      }).eq('id', updatedUser.id);
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Update user failed", err);
+      alert(`Erreur: ${err.message}`);
+      setUsers(prevUsers);
     }
-    setUsers(prev => prev.filter(u => u.id !== id));
-    await supabase.from('users').delete().eq('id', id);
   };
 
   const resetUserPassword = async (id: string) => {
-    const defaultPassword = 'passer25';
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, password: defaultPassword } : u));
-    await supabase.from('users').update({ password: defaultPassword }).eq('id', id);
+    const prevUsers = [...users];
+    setUsers(prev => prev.map(u => u.id === id ? { ...u, password: 'passer25' } : u));
+    try {
+      const { error } = await supabase.from('users').update({ password: 'passer25' }).eq('id', id);
+      if (error) throw error;
+      alert("Mot de passe réinitialisé à 'passer25'");
+    } catch (err: any) {
+      console.error("Reset password failed", err);
+      alert(`Erreur: ${err.message}`);
+      setUsers(prevUsers);
+    }
   };
 
-  const updateSettings = async (newSettings: SchoolSettings) => {
-    setSchoolSettings(newSettings);
-    document.title = newSettings.schoolName;
-    await supabase.from('school_settings').upsert({ id: 'config', school_name: newSettings.schoolName, theme_color: newSettings.themeColor });
+  // ROBUST DELETE USER: Database Cascade
+  // Assumes the user has run the SQL script to enable ON DELETE CASCADE
+  const deleteUser = async (id: string) => {
+    const prevUsers = [...users];
+    setUsers(prev => prev.filter(u => u.id !== id));
+
+    try {
+      // Direct delete - database handles cleanup of related items
+      const { error } = await supabase.from('users').delete().eq('id', id);
+      if (error) throw error;
+
+    } catch (err: any) {
+      console.error("Delete user failed", err);
+      // specific hint for foreign key constraint if they didn't run SQL
+      if (err.message?.includes('foreign key constraint') || err.code === '23503') {
+         alert("Impossible de supprimer : Vous devez exécuter le script SQL 'Cascade' dans Supabase pour autoriser la suppression d'un utilisateur ayant créé du contenu.");
+      } else {
+         alert(`Impossible de supprimer l'utilisateur. Erreur: ${err.message}`);
+      }
+      setUsers(prevUsers); // Rollback
+      fetchData(); // Refresh to ensure sync
+    }
+  };
+
+  // --- SETTINGS ---
+  const updateSettings = async (settings: SchoolSettings) => {
+    setSchoolSettings(settings);
+    try {
+      const { error } = await supabase.from('school_settings').upsert({
+        id: 'config',
+        school_name: settings.schoolName,
+        theme_color: settings.themeColor,
+        logo_url: settings.logoUrl
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      console.error("Update settings failed", err);
+    }
   };
 
   const addClassGroup = async (name: string) => {
-    const newClass: ClassGroup = { id: generateId(), name };
+    const newId = generateId();
+    const newClass = { id: newId, name };
     setClassGroups(prev => [...prev, newClass]);
-    await supabase.from('class_groups').insert(newClass);
+    try {
+      const { error } = await supabase.from('class_groups').insert(newClass);
+      if (error) throw error;
+    } catch (err: any) {
+      alert(`Erreur ajout classe: ${err.message}`);
+      setClassGroups(prev => prev.filter(c => c.id !== newId));
+    }
   };
 
   const deleteClassGroup = async (id: string) => {
+    const prevClasses = [...classGroups];
     setClassGroups(prev => prev.filter(c => c.id !== id));
-    await supabase.from('class_groups').delete().eq('id', id);
+    try {
+      const { error } = await supabase.from('class_groups').delete().eq('id', id);
+      if (error) throw error;
+    } catch (err: any) {
+      alert(`Impossible de supprimer la classe (peut-être utilisée ?): ${err.message}`);
+      setClassGroups(prevClasses);
+    }
   };
 
-  // --- Notifications ---
-  const notifications = useMemo(() => {
+  // --- NOTIFICATIONS ---
+  const notifications: AppNotification[] = useMemo(() => {
+    if (!currentUser) return [];
     const notifs: AppNotification[] = [];
-    const now = new Date();
 
+    // 1. Upcoming Exams (Alert)
     filteredExams.forEach(exam => {
-      const daysUntil = differenceInDays(new Date(exam.date), now);
-      if (daysUntil >= 0 && daysUntil <= 7) {
+      const daysLeft = differenceInDays(new Date(exam.date), new Date());
+      if (daysLeft >= 0 && daysLeft <= 7) {
         notifs.push({
           id: `exam-${exam.id}`,
           type: 'alert',
-          title: 'Examen Approchant',
-          message: `DS de ${exam.subject} ${daysUntil === 0 ? "aujourd'hui" : "dans " + daysUntil + " jours"}.`,
+          title: `Examen: ${exam.subject}`,
+          message: `Le ${new Date(exam.date).toLocaleDateString()} (${exam.startTime})`,
           linkTo: 'DS',
           timestamp: new Date(exam.date)
         });
       }
     });
 
+    // 2. New Announcements (Info)
     filteredAnnouncements.forEach(ann => {
-      const hoursSincePost = differenceInHours(now, new Date(ann.date));
-      const hoursUntilMeet = differenceInHours(new Date(ann.date), now);
-      if (ann.meetLink && hoursUntilMeet > 0 && hoursUntilMeet < 24) {
+      const hoursAgo = differenceInHours(new Date(), new Date(ann.date));
+      if (hoursAgo >= 0 && hoursAgo <= 48) {
         notifs.push({
-          id: `meet-${ann.id}`,
+          id: `ann-${ann.id}`,
           type: 'info',
-          title: 'Visioconférence Bientôt',
-          message: `Le cours "${ann.title}" commence bientôt.`,
+          title: ann.isUrgent ? `URGENT: ${ann.title}` : `Annonce: ${ann.title}`,
+          message: ann.subject,
           linkTo: 'INFOS',
           timestamp: new Date(ann.date)
         });
-      } else if (Math.abs(hoursSincePost) < 48) {
-         notifs.push({
-          id: `ann-${ann.id}`,
-          type: ann.isUrgent ? 'alert' : 'info',
-          title: ann.isUrgent ? 'Annonce Urgente' : 'Nouvelle Annonce',
-          message: ann.title,
-          linkTo: 'INFOS',
-          timestamp: new Date(ann.date)
-         });
       }
     });
 
+    // 3. New Polls (Success)
     filteredPolls.forEach(poll => {
-      const hoursSinceCreation = differenceInHours(now, new Date(poll.createdAt));
-      if (hoursSinceCreation < 48 && !poll.votedUserIds.includes(currentUser?.id || '')) {
-        notifs.push({
+       const hoursAgo = differenceInHours(new Date(), new Date(poll.createdAt));
+       // Check if user has NOT voted yet
+       const hasVoted = poll.userVotes && poll.userVotes[currentUser.id];
+       if (hoursAgo >= 0 && hoursAgo <= 48 && !hasVoted) {
+         notifs.push({
            id: `poll-${poll.id}`,
            type: 'success',
-           title: 'Nouveau Sondage',
+           title: "Nouveau sondage",
            message: poll.title,
            linkTo: 'POLLS',
            timestamp: new Date(poll.createdAt)
-        });
-      }
-    });
-
-    // Notify about new resources
-    filteredResources.forEach(res => {
-      const hoursSince = differenceInHours(now, res.createdAt);
-      if (hoursSince < 24) {
-        notifs.push({
-          id: `res-${res.id}`,
-          type: 'info',
-          title: 'Nouvelle Ressource',
-          message: `Ajout en ${res.subject}: ${res.title}`,
-          linkTo: 'RESOURCES',
-          timestamp: res.createdAt
-        });
-      }
+         });
+       }
     });
 
     return notifs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-  }, [filteredExams, filteredAnnouncements, filteredPolls, filteredResources, currentUser]);
+  }, [filteredExams, filteredAnnouncements, filteredPolls, currentUser]);
+
+  // --- STATS ---
+  const stats = useMemo(() => ({
+    students: users.filter(u => u.role === UserRole.ELEVE).length,
+    exams: filteredExams.filter(e => new Date(e.date) >= new Date()).length,
+    polls: filteredPolls.length,
+    resources: filteredResources.length
+  }), [users, filteredExams, filteredPolls, filteredResources]);
+
+  const upcomingExam = useMemo(() => {
+    const futureExams = filteredExams.filter(e => new Date(e.date) >= new Date());
+    return futureExams.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
+  }, [filteredExams]);
+
+  const latestAnnouncement = useMemo(() => {
+    return [...filteredAnnouncements].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+  }, [filteredAnnouncements]);
+
+  const activePoll = useMemo(() => {
+    return filteredPolls.find(p => !p.userVotes || !p.userVotes[currentUser?.id || '']);
+  }, [filteredPolls, currentUser]);
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 flex-col">
-        <Loader2 className="animate-spin h-10 w-10 text-indigo-600 mb-4" />
-        <p className="text-slate-500 font-medium">Chargement des données...</p>
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="text-center animate-pulse">
+           <Loader2 size={48} className="text-indigo-600 animate-spin mx-auto mb-4" />
+           <p className="text-slate-500 font-medium">Chargement de votre espace...</p>
+        </div>
       </div>
     );
   }
 
   if (dbError) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-lg text-center border border-red-100">
-           <div className="mx-auto h-16 w-16 bg-red-100 rounded-full flex items-center justify-center mb-4 text-red-600">
-              <AlertTriangle size={32} />
-           </div>
-           <h2 className="text-2xl font-bold text-slate-900 mb-2">Configuration Requise</h2>
-           <p className="text-slate-600 mb-6">{dbError}</p>
-        </div>
-      </div>
+       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+         <div className="max-w-md w-full bg-white p-8 rounded-xl shadow-lg border border-red-100 text-center">
+            <div className="bg-red-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+               <AlertTriangle size={32} className="text-red-500" />
+            </div>
+            <h2 className="text-xl font-bold text-slate-800 mb-2">Erreur de Connexion</h2>
+            <p className="text-slate-600 mb-6">{dbError}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium"
+            >
+              Réessayer
+            </button>
+         </div>
+       </div>
     );
   }
 
   if (!currentUser) {
-    return <Login onLogin={handleLogin} />;
+    return <Login onLogin={handleLogin} logoUrl={schoolSettings.logoUrl} />;
   }
 
   return (
     <Layout 
       currentUser={currentUser} 
       currentView={currentView} 
-      onChangeView={setCurrentView}
+      onChangeView={changeView}
+      onNavigateBack={navigateBack}
       onLogout={handleLogout}
       notifications={notifications}
       schoolName={schoolSettings.schoolName}
+      logoUrl={schoolSettings.logoUrl}
     >
       {currentView === 'DASHBOARD' && (
         <Dashboard 
           currentUser={currentUser}
-          stats={{
-            students: users.filter(u => u.role === UserRole.ELEVE).length,
-            polls: filteredPolls.length,
-            exams: filteredExams.length,
-            resources: filteredResources.length
-          }}
-          upcomingExam={[...filteredExams].sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()).find(e => new Date(e.date) > new Date())}
-          activePoll={filteredPolls.filter(p => new Date(p.expiresAt) > new Date())[0]}
-          latestAnnouncement={[...filteredAnnouncements].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]}
+          stats={stats}
+          upcomingExam={upcomingExam}
+          activePoll={activePoll}
+          latestAnnouncement={latestAnnouncement}
           notifications={notifications}
-          onChangeView={setCurrentView}
+          onChangeView={changeView}
           onRefresh={fetchData}
         />
       )}
       {currentView === 'INFOS' && (
         <InfoBoard 
-          currentUser={currentUser}
-          announcements={filteredAnnouncements}
+          currentUser={currentUser} 
+          announcements={filteredAnnouncements} 
           classGroups={classGroups}
           onAdd={addAnnouncement}
+          onUpdate={updateAnnouncement}
           onDelete={deleteAnnouncement}
         />
       )}
       {currentView === 'DS' && (
         <ExamSchedule 
-          currentUser={currentUser}
-          exams={filteredExams}
+          currentUser={currentUser} 
+          exams={filteredExams} 
           classGroups={classGroups}
           onAdd={addExam}
+          onUpdate={updateExam}
           onDelete={deleteExam}
-        />
-      )}
-      {currentView === 'RESOURCES' && (
-        <Resources 
-          currentUser={currentUser}
-          resources={filteredResources}
-          classGroups={classGroups}
-          onAdd={addResource}
-          onDelete={deleteResource}
         />
       )}
       {currentView === 'POLLS' && (
         <Polls 
-          currentUser={currentUser}
-          polls={filteredPolls}
+          currentUser={currentUser} 
+          polls={filteredPolls} 
           classGroups={classGroups}
           onAdd={addPoll}
+          onUpdate={updatePoll}
           onVote={votePoll}
           onDelete={deletePoll}
         />
       )}
+      {currentView === 'RESOURCES' && (
+        <Resources
+          currentUser={currentUser}
+          resources={filteredResources}
+          classGroups={classGroups}
+          onAdd={addResource}
+          onUpdate={updateResource}
+          onDelete={deleteResource}
+        />
+      )}
       {currentView === 'USERS' && currentUser.role === UserRole.ADMIN && (
         <UserManagement 
-          users={users}
+          users={users} 
           classGroups={classGroups}
           onAdd={addUser}
           onUpdate={updateUser}
@@ -583,12 +870,12 @@ const App: React.FC = () => {
       )}
       {currentView === 'SETTINGS' && currentUser.role === UserRole.ADMIN && (
         <Settings 
-          settings={schoolSettings}
-          classGroups={classGroups}
-          onUpdateSettings={updateSettings}
-          onAddClass={addClassGroup}
-          onDeleteClass={deleteClassGroup}
-          onNavigateToUsers={() => setCurrentView('USERS')}
+           settings={schoolSettings} 
+           classGroups={classGroups}
+           onUpdateSettings={updateSettings}
+           onAddClass={addClassGroup}
+           onDeleteClass={deleteClassGroup}
+           onNavigateToUsers={() => changeView('USERS')}
         />
       )}
     </Layout>

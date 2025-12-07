@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Announcement, User, UserRole, ClassGroup } from '../types';
-import { Video, Trash2, Plus, Clock, AlertCircle, Megaphone, Users, Share2, Copy, Mail, Check } from 'lucide-react';
-import { format, differenceInHours } from 'date-fns';
+import { Video, Trash2, Plus, Clock, AlertCircle, Megaphone, Users, Share2, Copy, Mail, Check, Pencil, MoreVertical } from 'lucide-react';
+import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 
 interface InfoBoardProps {
@@ -9,11 +10,14 @@ interface InfoBoardProps {
   announcements: Announcement[];
   classGroups: ClassGroup[];
   onAdd: (announcement: Omit<Announcement, 'id' | 'authorId' | 'authorName'>) => void;
+  onUpdate: (announcement: Omit<Announcement, 'authorName'>) => void;
   onDelete: (id: string) => void;
 }
 
-export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements, classGroups, onAdd, onDelete }) => {
+export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements, classGroups, onAdd, onUpdate, onDelete }) => {
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
   const [newTitle, setNewTitle] = useState('');
   const [newSubject, setNewSubject] = useState('');
   const [newLink, setNewLink] = useState('');
@@ -21,18 +25,24 @@ export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements
   const [newDate, setNewDate] = useState('');
   const [targetClass, setTargetClass] = useState('');
 
-  // Share State
+  // Share & Menu State
   const [activeShareId, setActiveShareId] = useState<string | null>(null);
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  
   const shareMenuRef = useRef<HTMLDivElement>(null);
+  const actionMenuRef = useRef<HTMLDivElement>(null);
 
   const canEdit = [UserRole.ADMIN, UserRole.RESPONSABLE].includes(currentUser.role);
 
-  // Close share menu when clicking outside
+  // Close menus when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (shareMenuRef.current && !shareMenuRef.current.contains(event.target as Node)) {
         setActiveShareId(null);
+      }
+      if (actionMenuRef.current && !actionMenuRef.current.contains(event.target as Node)) {
+        setActiveMenuId(null);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -59,15 +69,53 @@ export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onAdd({
-      title: newTitle,
-      subject: newSubject,
-      meetLink: newLink || undefined,
-      isUrgent,
-      date: new Date(newDate),
-      targetClass: targetClass || undefined
-    });
+    if (editingId) {
+        // Update
+        const existingAnn = announcements.find(a => a.id === editingId);
+        if (existingAnn) {
+           onUpdate({
+             ...existingAnn,
+             title: newTitle,
+             subject: newSubject,
+             meetLink: newLink || undefined,
+             isUrgent,
+             date: new Date(newDate),
+             targetClass: targetClass || undefined
+           });
+        }
+    } else {
+        // Create
+        onAdd({
+          title: newTitle,
+          subject: newSubject,
+          meetLink: newLink || undefined,
+          isUrgent,
+          date: new Date(newDate),
+          targetClass: targetClass || undefined
+        });
+    }
+    closeForm();
+  };
+
+  const handleEdit = (ann: Announcement) => {
+     setEditingId(ann.id);
+     setNewTitle(ann.title);
+     setNewSubject(ann.subject);
+     setNewLink(ann.meetLink || '');
+     setIsUrgent(ann.isUrgent);
+     // Format date for datetime-local input (YYYY-MM-DDTHH:mm)
+     const d = new Date(ann.date);
+     const dateString = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+     setNewDate(dateString);
+     setTargetClass(ann.targetClass || '');
+     setIsFormOpen(true);
+     setActiveMenuId(null);
+     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const closeForm = () => {
     setIsFormOpen(false);
+    setEditingId(null);
     setNewTitle(''); setNewSubject(''); setNewLink(''); setIsUrgent(false); setNewDate(''); setTargetClass('');
   };
 
@@ -75,6 +123,7 @@ export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements
     if (window.confirm("Voulez-vous vraiment supprimer cette annonce ? Cette action est irréversible.")) {
       onDelete(id);
     }
+    setActiveMenuId(null);
   };
 
   const sortedAnnouncements = [...announcements].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -88,7 +137,7 @@ export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements
         </div>
         {canEdit && (
           <button
-            onClick={() => setIsFormOpen(!isFormOpen)}
+            onClick={() => { closeForm(); setIsFormOpen(!isFormOpen); }}
             className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-all shadow-sm"
           >
             <Plus size={18} />
@@ -99,7 +148,7 @@ export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements
 
       {isFormOpen && (
         <div className="bg-white p-6 rounded-xl border border-indigo-100 shadow-lg animate-fade-in">
-           {/* Form Content */}
+           <h3 className="font-semibold text-lg mb-4 text-indigo-700">{editingId ? 'Modifier l\'annonce' : 'Nouvelle Annonce'}</h3>
            <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="md:col-span-2">
                  <label className="text-sm font-semibold text-slate-700 block mb-1">Cible</label>
@@ -114,6 +163,9 @@ export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements
                      .map(group => (
                        <option key={group.id} value={group.name}>🎓 {group.name}</option>
                    ))}
+                   {!currentUser.classGroup && currentUser.role !== UserRole.ADMIN && (
+                     <option value="" disabled>🚫 Aucune classe assignée à votre compte</option>
+                   )}
                  </select>
               </div>
 
@@ -128,8 +180,10 @@ export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements
               </div>
 
               <div className="md:col-span-2 flex justify-end space-x-2">
-                <button type="button" onClick={() => setIsFormOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded">Annuler</button>
-                <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Publier</button>
+                <button type="button" onClick={closeForm} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded">Annuler</button>
+                <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">
+                   {editingId ? 'Mettre à jour' : 'Publier'}
+                </button>
               </div>
            </form>
         </div>
@@ -141,12 +195,13 @@ export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements
           const TitleIcon = ann.isUrgent ? AlertCircle : Megaphone;
           
           // Permission Checks
-          const canDelete = currentUser.role === UserRole.ADMIN || 
-                            (currentUser.role === UserRole.RESPONSABLE && ann.targetClass === currentUser.classGroup) ||
-                            (ann.authorId === currentUser.id);
+          const isCreator = ann.authorId === currentUser.id;
+          const isAdmin = currentUser.role === UserRole.ADMIN;
+          const canManage = isAdmin || isCreator || 
+                            (currentUser.role === UserRole.RESPONSABLE && ann.targetClass === currentUser.classGroup);
 
           return (
-            <div key={ann.id} className={`bg-white rounded-xl p-5 shadow-sm border ${ann.isUrgent ? 'border-orange-200 bg-orange-50/30' : 'border-slate-200'} transition-all hover:shadow-md relative group`}>
+            <div key={ann.id} className={`bg-white rounded-xl p-5 shadow-sm border ${ann.isUrgent ? 'border-orange-200 bg-orange-50/30' : 'border-slate-200'} transition-all hover:shadow-md relative group ${activeMenuId === ann.id ? 'z-50' : 'z-0'}`}>
                <div className="flex items-start justify-between">
                  <div className="flex items-start space-x-4 flex-1">
                     <div className={`p-2.5 rounded-xl flex-shrink-0 ${ann.isUrgent ? 'bg-orange-100 text-orange-600' : 'bg-indigo-50 text-indigo-600'}`}>
@@ -162,9 +217,10 @@ export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements
                           )}
                           
                           {/* SHARE BUTTON */}
-                          <div className="relative inline-block ml-1">
+                          <div className="relative inline-block ml-1 z-10">
                              <button 
-                               onClick={() => setActiveShareId(activeShareId === ann.id ? null : ann.id)}
+                               type="button"
+                               onClick={(e) => { e.stopPropagation(); setActiveShareId(activeShareId === ann.id ? null : ann.id); }}
                                className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-full transition-colors"
                                title="Partager"
                              >
@@ -172,7 +228,7 @@ export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements
                              </button>
 
                              {activeShareId === ann.id && (
-                               <div ref={shareMenuRef} className="absolute left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-slate-100 z-10 animate-in fade-in slide-in-from-top-2">
+                               <div ref={shareMenuRef} className="absolute left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-slate-100 z-50 animate-in fade-in slide-in-from-top-2">
                                   <button 
                                     onClick={() => handleShareCopy(ann)}
                                     className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 first:rounded-t-lg"
@@ -229,14 +285,34 @@ export const InfoBoard: React.FC<InfoBoardProps> = ({ currentUser, announcements
                     </div>
                  </div>
 
-                 {canDelete && (
-                   <button 
-                     onClick={() => handleDelete(ann.id)}
-                     className="ml-2 p-2 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                     title="Supprimer"
-                   >
-                     <Trash2 size={18} />
-                   </button>
+                 {/* ACTION MENU */}
+                 {canManage && (
+                   <div className="relative ml-2 z-20">
+                      <button 
+                         type="button"
+                         onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === ann.id ? null : ann.id); }}
+                         className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors"
+                       >
+                         <MoreVertical size={20} />
+                       </button>
+
+                       {activeMenuId === ann.id && (
+                         <div ref={actionMenuRef} className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-slate-100 z-50 animate-in fade-in zoom-in-95 origin-top-right">
+                           <button 
+                             onClick={(e) => { e.stopPropagation(); handleEdit(ann); }}
+                             className="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 first:rounded-t-lg"
+                           >
+                             <Pencil size={16} /> Modifier
+                           </button>
+                           <button 
+                             onClick={(e) => { e.stopPropagation(); handleDelete(ann.id); }}
+                             className="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 last:rounded-b-lg border-t border-slate-50"
+                           >
+                             <Trash2 size={16} /> Supprimer
+                           </button>
+                         </div>
+                       )}
+                   </div>
                  )}
                </div>
             </div>

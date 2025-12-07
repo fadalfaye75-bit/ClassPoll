@@ -1,13 +1,15 @@
+
 import React, { useState } from 'react';
 import { GraduationCap, Mail, Lock, AlertCircle, ShieldCheck, ArrowLeft, Send } from 'lucide-react';
 
 interface LoginProps {
   onLogin: (email: string, pass: string) => boolean;
+  logoUrl?: string;
 }
 
 type AuthView = 'LOGIN' | 'FORGOT_PASSWORD';
 
-export const Login: React.FC<LoginProps> = ({ onLogin }) => {
+export const Login: React.FC<LoginProps> = ({ onLogin, logoUrl }) => {
   const [view, setView] = useState<AuthView>('LOGIN');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -40,9 +42,15 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-blue-50 rounded-full blur-3xl opacity-60 pointer-events-none"></div>
 
         <div className="text-center relative z-10">
-          <div className="mx-auto h-20 w-20 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-indigo-200 rotate-3 transform transition-transform hover:rotate-6">
-            <GraduationCap className="text-white h-10 w-10" />
-          </div>
+          {logoUrl ? (
+            <div className="mx-auto h-24 w-auto flex items-center justify-center mb-6 drop-shadow-lg transform transition-transform hover:scale-105">
+               <img src={logoUrl} alt="Logo" className="h-full w-full object-contain" />
+            </div>
+          ) : (
+            <div className="mx-auto h-20 w-20 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-indigo-200 rotate-3 transform transition-transform hover:rotate-6">
+               <GraduationCap className="text-white h-10 w-10" />
+            </div>
+          )}
           <h2 className="text-3xl font-bold text-slate-900 tracking-tight">ClassPoll+</h2>
           <p className="mt-2 text-sm text-slate-500 font-medium">Votre Espace Numérique de Travail</p>
         </div>

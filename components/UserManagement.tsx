@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { User, UserRole, ClassGroup } from '../types';
-import { Trash2, UserPlus, Shield, GraduationCap, User as UserIcon, Lock, Pencil, RotateCcw, Filter, CheckCircle2 } from 'lucide-react';
+import { Trash2, UserPlus, Shield, GraduationCap, User as UserIcon, Pencil, RotateCcw, Filter, MoreVertical } from 'lucide-react';
 
 interface UserManagementProps {
   users: User[];
@@ -15,12 +16,26 @@ export const UserManagement: React.FC<UserManagementProps> = ({ users, classGrou
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>('ALL');
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('passer25');
   const [newRole, setNewRole] = useState<UserRole>(UserRole.ELEVE);
   const [newClassGroup, setNewClassGroup] = useState('');
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setActiveMenuId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,6 +76,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ users, classGrou
     setNewRole(user.role);
     setNewClassGroup(user.classGroup || '');
     setIsFormOpen(true);
+    setActiveMenuId(null);
     // Scroll to form on mobile
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -79,12 +95,14 @@ export const UserManagement: React.FC<UserManagementProps> = ({ users, classGrou
     if (window.confirm(`Voulez-vous vraiment réinitialiser le mot de passe de "${user.name}" à "passer25" ?`)) {
       onResetPassword(user.id);
     }
+    setActiveMenuId(null);
   };
 
   const handleDelete = (user: User) => {
     if (window.confirm(`ATTENTION : Vous êtes sur le point de supprimer définitivement le compte de "${user.name}".\n\nCette action est irréversible.`)) {
       onDelete(user.id);
     }
+    setActiveMenuId(null);
   };
 
   const getRoleIcon = (role: UserRole) => {
@@ -212,7 +230,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ users, classGrou
       </div>
 
       {/* --- DESKTOP TABLE VIEW --- */}
-      <div className="hidden md:block bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div className="hidden md:block bg-white rounded-xl shadow-sm border border-slate-200 overflow-visible">
         <table className="w-full text-left">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
@@ -250,28 +268,39 @@ export const UserManagement: React.FC<UserManagementProps> = ({ users, classGrou
                     <span className="capitalize">{user.role.toLowerCase()}</span>
                   </span>
                 </td>
-                <td className="p-4 text-right space-x-2">
-                  <button 
-                    onClick={() => handleResetPassword(user)}
-                    className="text-slate-400 hover:text-orange-500 transition-colors p-1"
-                    title="Réinitialiser le mot de passe"
-                  >
-                    <RotateCcw size={16} />
-                  </button>
-                  <button 
-                    onClick={() => handleEdit(user)}
-                    className="text-slate-400 hover:text-indigo-600 transition-colors p-1"
-                    title="Modifier"
-                  >
-                    <Pencil size={16} />
-                  </button>
-                  <button 
-                    onClick={() => handleDelete(user)}
-                    className="text-slate-400 hover:text-red-600 transition-colors p-1"
-                    title="Supprimer"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                <td className="p-4 text-right">
+                  <div className="relative">
+                      <button 
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === user.id ? null : user.id); }}
+                        className="text-slate-400 hover:text-indigo-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                      >
+                        <MoreVertical size={18} />
+                      </button>
+
+                      {activeMenuId === user.id && (
+                        <div ref={menuRef} className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-slate-100 z-50 animate-in fade-in zoom-in-95 origin-top-right">
+                           <button 
+                            onClick={(e) => { e.stopPropagation(); handleResetPassword(user); }}
+                            className="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-orange-50 hover:text-orange-700 flex items-center gap-2 first:rounded-t-lg"
+                           >
+                            <RotateCcw size={16} /> Reset Pass
+                           </button>
+                           <button 
+                            onClick={(e) => { e.stopPropagation(); handleEdit(user); }}
+                            className="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2"
+                           >
+                            <Pencil size={16} /> Modifier
+                           </button>
+                           <button 
+                            onClick={(e) => { e.stopPropagation(); handleDelete(user); }}
+                            className="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 last:rounded-b-lg border-t border-slate-50"
+                           >
+                            <Trash2 size={16} /> Supprimer
+                           </button>
+                        </div>
+                      )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -282,7 +311,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ users, classGrou
       {/* --- MOBILE CARD VIEW --- */}
       <div className="md:hidden space-y-4">
         {filteredUsers.map((user) => (
-          <div key={user.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div key={user.id} className={`bg-white p-4 rounded-xl shadow-sm border border-slate-200 relative ${activeMenuId === user.id ? 'z-50' : 'z-0'}`}>
             <div className="flex justify-between items-start mb-3">
                <div className="flex items-center space-x-3">
                   <div className="h-10 w-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-700 font-bold text-sm">
@@ -295,15 +324,42 @@ export const UserManagement: React.FC<UserManagementProps> = ({ users, classGrou
                     </span>
                   </div>
                </div>
-               <button 
-                  onClick={() => handleEdit(user)}
-                  className="p-2 text-indigo-600 bg-indigo-50 rounded-lg active:bg-indigo-100"
-                >
-                  <Pencil size={18} />
-               </button>
+               
+               <div className="relative">
+                  <button 
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === user.id ? null : user.id); }}
+                    className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-50 rounded-lg hover:bg-indigo-50 transition-colors"
+                  >
+                    <MoreVertical size={20} />
+                  </button>
+
+                  {activeMenuId === user.id && (
+                    <div ref={menuRef} className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-slate-100 z-50 animate-in fade-in zoom-in-95 origin-top-right">
+                       <button 
+                        onClick={(e) => { e.stopPropagation(); handleResetPassword(user); }}
+                        className="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-orange-50 hover:text-orange-700 flex items-center gap-2 first:rounded-t-lg"
+                       >
+                        <RotateCcw size={16} /> Reset Pass
+                       </button>
+                       <button 
+                        onClick={(e) => { e.stopPropagation(); handleEdit(user); }}
+                        className="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2"
+                       >
+                        <Pencil size={16} /> Modifier
+                       </button>
+                       <button 
+                        onClick={(e) => { e.stopPropagation(); handleDelete(user); }}
+                        className="w-full text-left px-4 py-3 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 last:rounded-b-lg border-t border-slate-50"
+                       >
+                        <Trash2 size={16} /> Supprimer
+                       </button>
+                    </div>
+                  )}
+               </div>
             </div>
             
-            <div className="space-y-2 text-sm text-slate-600 mb-4">
+            <div className="space-y-2 text-sm text-slate-600">
                <div className="flex items-center gap-2">
                  <UserIcon size={14} className="text-slate-400" />
                  <span className="truncate">{user.email}</span>
@@ -314,21 +370,6 @@ export const UserManagement: React.FC<UserManagementProps> = ({ users, classGrou
                    <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-semibold border border-indigo-100">{user.classGroup}</span>
                  </div>
                )}
-            </div>
-
-            <div className="flex gap-2 pt-3 border-t border-slate-100">
-               <button 
-                 onClick={() => handleResetPassword(user)}
-                 className="flex-1 py-2 flex items-center justify-center gap-2 text-xs font-medium text-orange-600 bg-orange-50 rounded-lg active:bg-orange-100"
-               >
-                 <RotateCcw size={14} /> Reset Pass
-               </button>
-               <button 
-                 onClick={() => handleDelete(user)}
-                 className="flex-1 py-2 flex items-center justify-center gap-2 text-xs font-medium text-red-600 bg-red-50 rounded-lg active:bg-red-100"
-               >
-                 <Trash2 size={14} /> Supprimer
-               </button>
             </div>
           </div>
         ))}

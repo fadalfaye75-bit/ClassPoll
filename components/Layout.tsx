@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { User, UserRole, ViewState, AppNotification } from '../types';
 import { 
@@ -23,9 +24,11 @@ interface LayoutProps {
   currentUser: User;
   currentView: ViewState;
   onChangeView: (view: ViewState) => void;
+  onNavigateBack: () => void;
   onLogout: () => void;
   notifications: AppNotification[];
   schoolName: string;
+  logoUrl?: string;
   children: React.ReactNode;
 }
 
@@ -33,9 +36,11 @@ export const Layout: React.FC<LayoutProps> = ({
   currentUser, 
   currentView, 
   onChangeView, 
+  onNavigateBack,
   onLogout, 
   notifications,
   schoolName,
+  logoUrl,
   children 
 }) => {
   const [isNotifOpen, setIsNotifOpen] = useState(false);
@@ -146,10 +151,14 @@ export const Layout: React.FC<LayoutProps> = ({
       {/* --- DESKTOP SIDEBAR --- */}
       <aside className="hidden md:flex flex-col w-72 bg-white border-r border-slate-200/60 fixed h-full z-20 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.1)]">
         <div className="p-8 flex items-center space-x-3">
-          <div className="bg-gradient-to-br from-indigo-600 to-violet-600 p-2.5 rounded-xl shadow-lg shadow-indigo-200 flex-shrink-0">
-            <GraduationCap className="text-white h-6 w-6" />
-          </div>
-          <span className="text-xl font-bold text-slate-900 tracking-tight leading-none" title={schoolName}>
+          {logoUrl ? (
+            <img src={logoUrl} alt="Logo" className="h-10 w-auto object-contain max-w-[50px]" />
+          ) : (
+            <div className="bg-gradient-to-br from-indigo-600 to-violet-600 p-2.5 rounded-xl shadow-lg shadow-indigo-200 flex-shrink-0">
+              <GraduationCap className="text-white h-6 w-6" />
+            </div>
+          )}
+          <span className="text-xl font-bold text-slate-900 tracking-tight leading-none line-clamp-2" title={schoolName}>
             {schoolName}
           </span>
         </div>
@@ -192,15 +201,19 @@ export const Layout: React.FC<LayoutProps> = ({
          <div className="flex items-center space-x-3 overflow-hidden">
             {currentView !== 'DASHBOARD' ? (
               <button 
-                onClick={() => onChangeView('DASHBOARD')}
+                onClick={onNavigateBack}
                 className="p-2 rounded-full text-slate-600 hover:bg-slate-100/50 active:scale-95 transition-all"
               >
                 <ArrowLeft size={22} />
               </button>
             ) : (
-              <div className="bg-indigo-600 p-1.5 rounded-lg flex-shrink-0 shadow-md shadow-indigo-200">
-                <GraduationCap className="text-white h-5 w-5" />
-              </div>
+               logoUrl ? (
+                 <img src={logoUrl} alt="Logo" className="h-8 w-auto object-contain" />
+               ) : (
+                <div className="bg-indigo-600 p-1.5 rounded-lg flex-shrink-0 shadow-md shadow-indigo-200">
+                  <GraduationCap className="text-white h-5 w-5" />
+                </div>
+               )
             )}
             <span className="text-lg font-bold text-slate-800 truncate tracking-tight">
               {currentView === 'DASHBOARD' ? schoolName : 
@@ -235,11 +248,11 @@ export const Layout: React.FC<LayoutProps> = ({
            <div className="flex items-center">
              {currentView !== 'DASHBOARD' && (
                <button 
-                 onClick={() => onChangeView('DASHBOARD')}
+                 onClick={onNavigateBack}
                  className="flex items-center space-x-2 text-slate-500 hover:text-indigo-600 transition-colors px-4 py-2 rounded-xl hover:bg-slate-50"
                >
                  <ArrowLeft size={18} />
-                 <span className="text-sm font-semibold">Retour au tableau de bord</span>
+                 <span className="text-sm font-semibold">Retour</span>
                </button>
              )}
            </div>
